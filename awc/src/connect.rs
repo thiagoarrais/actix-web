@@ -10,7 +10,7 @@ use actix_http::client::{
     Connect as ClientConnect, ConnectError, Connection, SendRequestError,
 };
 use actix_http::h1::ClientCodec;
-use actix_http::http::HeaderMap;
+use actix_http::http::{ HeaderMap, Uri };
 use actix_http::{RequestHead, RequestHeadType, ResponseHead};
 use actix_service::Service;
 
@@ -93,11 +93,21 @@ where
             let connection = fut.await?;
 
             // send request
-            connection
+            let resp = connection
                 .send_request(RequestHeadType::from(head), body)
-                .await
-                .map(|(head, payload)| ClientResponse::new(head, payload))
-        })
+                .await;
+
+                if let (resphead, _) = resp.unwrap() {
+                    if resphead.status.is_redirection() {
+                        let reqhead = head;
+                        reqhead.uri = resphead.headers.get(actix_http::http::header::LOCATION).unwrap().to_str().unwrap().parse::<Uri>().unwrap();
+                        return self.send_request(head, body, addr).await;
+                    }
+                }
+
+                resp.map(|(head, payload)| ClientResponse::new(head, payload))
+
+            })
     }
 
     fn send_request_extra(
