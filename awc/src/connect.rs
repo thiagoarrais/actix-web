@@ -17,7 +17,7 @@ use actix_service::Service;
 
 use crate::response::ClientResponse;
 
-pub(crate) struct ConnectorWrapper<T>(pub T);
+pub(crate) struct ConnectorWrapper<T>(pub Rc<RefCell<T>>);
 
 pub(crate) trait Connect {
     fn send_request(
@@ -98,7 +98,7 @@ where
             S::Future: 'static,
         {
             // connect to the host
-            let fut = backend.call(ClientConnect {
+            let fut = backend.borrow_mut().call(ClientConnect {
                 uri: head.uri.clone(),
                 addr,
             });
