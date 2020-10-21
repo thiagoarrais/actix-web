@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -70,7 +71,7 @@ pub(crate) trait Connect {
 
 impl<T> Connect for ConnectorWrapper<T>
 where
-    T: Service<Request = ClientConnect, Error = ConnectError>,
+    T: Service<Request = ClientConnect, Error = ConnectError> + 'static,
     T::Response: Connection,
     <T::Response as Connection>::Io: 'static,
     <T::Response as Connection>::Future: 'static,
@@ -83,7 +84,7 @@ where
         body: Body,
         addr: Option<net::SocketAddr>,
     ) -> Pin<Box<dyn Future<Output = Result<ClientResponse, SendRequestError>>>> {
-        fn deal_with_redirects<S>(backend: S,
+        fn deal_with_redirects<S>(backend: Rc<RefCell<S>>,
             head: RequestHead,
             body: Body,
             addr: Option<net::SocketAddr>,
@@ -107,23 +108,25 @@ where
 
                 // send request
                 let resp = connection
-                    .send_request(RequestHeadType::from(head), body)
+                    .send_request(RequestHeadType::from(head), Body::Empty)
                     .await;
 
-                    if let (resphead, _) = resp.unwrap() {
+                    if resp.is_ok() {
+                        let (resphead, payload) = resp.unwrap();
                         if resphead.status.is_redirection() {
-                            let reqhead = RequestHead::default();
+                            let mut reqhead = RequestHead::default();
                             reqhead.uri = resphead.headers.get(actix_http::http::header::LOCATION).unwrap().to_str().unwrap().parse::<Uri>().unwrap();
-                            return deal_with_redirects(backend, reqhead, body, addr).await;
+                            return deal_with_redirects(backend.clone(), reqhead, body, addr).await;
                         }
+                        Ok(ClientResponse::new(resphead, payload))
+                    } else {
+                        // TODO: reproduce error from resp
+                        Err(SendRequestError::Timeout)
                     }
-
-                    resp.map(|(head, payload)| ClientResponse::new(head, payload))
-
                 })
         }
 
-        deal_with_redirects(self.0, head, body, addr)
+        deal_with_redirects(self.0.clone(), head, body, addr)
     }
 
     fn send_request_extra(
