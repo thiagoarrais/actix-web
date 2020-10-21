@@ -99,7 +99,7 @@ where
 
                 if let (resphead, _) = resp.unwrap() {
                     if resphead.status.is_redirection() {
-                        let reqhead = head;
+                        let reqhead = RequestHead::default();
                         reqhead.uri = resphead.headers.get(actix_http::http::header::LOCATION).unwrap().to_str().unwrap().parse::<Uri>().unwrap();
                         return self.send_request(head, body, addr).await;
                     }
