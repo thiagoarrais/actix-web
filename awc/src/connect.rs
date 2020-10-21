@@ -111,19 +111,18 @@ where
                     .send_request(RequestHeadType::from(head), Body::Empty)
                     .await;
 
-                    if resp.is_ok() {
-                        let (resphead, payload) = resp.unwrap();
+                match resp {
+                    Ok((resphead, payload)) => {
                         if resphead.status.is_redirection() {
                             let mut reqhead = RequestHead::default();
                             reqhead.uri = resphead.headers.get(actix_http::http::header::LOCATION).unwrap().to_str().unwrap().parse::<Uri>().unwrap();
                             return deal_with_redirects(backend.clone(), reqhead, body, addr).await;
                         }
                         Ok(ClientResponse::new(resphead, payload))
-                    } else {
-                        // TODO: reproduce error from resp
-                        Err(SendRequestError::Timeout)
-                    }
-                })
+                    },
+                    Err(e) => Err(e)
+                }
+            })
         }
 
         deal_with_redirects(self.0.clone(), head, body, addr)
