@@ -83,31 +83,47 @@ where
         body: Body,
         addr: Option<net::SocketAddr>,
     ) -> Pin<Box<dyn Future<Output = Result<ClientResponse, SendRequestError>>>> {
-        // connect to the host
-        let fut = self.0.call(ClientConnect {
-            uri: head.uri.clone(),
-            addr,
-        });
+        fn deal_with_redirects<S>(backend: S,
+            head: RequestHead,
+            body: Body,
+            addr: Option<net::SocketAddr>,
+        ) -> Pin<Box<dyn Future<Output = Result<ClientResponse, SendRequestError>>>>
+        where
+            S: Service<Request = ClientConnect, Error = ConnectError> + 'static,
+            S::Response: Connection,
+            <S::Response as Connection>::Io: 'static,
+            <S::Response as Connection>::Future: 'static,
+            <S::Response as Connection>::TunnelFuture: 'static,
+            S::Future: 'static,
+        {
+            // connect to the host
+            let fut = backend.call(ClientConnect {
+                uri: head.uri.clone(),
+                addr,
+            });
 
-        Box::pin(async move {
-            let connection = fut.await?;
+            Box::pin(async move {
+                let connection = fut.await?;
 
-            // send request
-            let resp = connection
-                .send_request(RequestHeadType::from(head), body)
-                .await;
+                // send request
+                let resp = connection
+                    .send_request(RequestHeadType::from(head), body)
+                    .await;
 
-                if let (resphead, _) = resp.unwrap() {
-                    if resphead.status.is_redirection() {
-                        let reqhead = RequestHead::default();
-                        reqhead.uri = resphead.headers.get(actix_http::http::header::LOCATION).unwrap().to_str().unwrap().parse::<Uri>().unwrap();
-                        return self.send_request(head, body, addr).await;
+                    if let (resphead, _) = resp.unwrap() {
+                        if resphead.status.is_redirection() {
+                            let reqhead = RequestHead::default();
+                            reqhead.uri = resphead.headers.get(actix_http::http::header::LOCATION).unwrap().to_str().unwrap().parse::<Uri>().unwrap();
+                            return deal_with_redirects(backend, reqhead, body, addr).await;
+                        }
                     }
-                }
 
-                resp.map(|(head, payload)| ClientResponse::new(head, payload))
+                    resp.map(|(head, payload)| ClientResponse::new(head, payload))
 
-            })
+                })
+        }
+
+        deal_with_redirects(self.0, head, body, addr)
     }
 
     fn send_request_extra(
