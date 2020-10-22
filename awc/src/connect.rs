@@ -10,6 +10,7 @@ use actix_http::body::Body;
 use actix_http::client::{
     Connect as ClientConnect, ConnectError, Connection, SendRequestError,
 };
+use actix_http::Extensions;
 use actix_http::h1::ClientCodec;
 use actix_http::http::{ HeaderMap, Uri };
 use actix_http::{RequestHead, RequestHeadType, ResponseHead};
@@ -116,6 +117,16 @@ where
                     Body::Message(_) => Body::Empty,
                 };
 
+                let mut reqhead = RequestHead::default();
+                // FIXME: method depends on redirect code
+                reqhead.method = head.method.clone();
+                reqhead.version = head.version.clone();
+                // FIXME: not all headers should be mirrored on redirect
+                reqhead.headers = head.headers.clone();
+                // FIXME: should we mirror extensions?
+                reqhead.extensions = RefCell::new(Extensions::new());
+                reqhead.peer_addr = head.peer_addr.clone();
+
                 // send request
                 let resp = connection
                     .send_request(RequestHeadType::from(head), body)
@@ -124,7 +135,6 @@ where
                 match resp {
                     Ok((resphead, payload)) => {
                         if resphead.status.is_redirection() {
-                            let mut reqhead = RequestHead::default();
                             reqhead.uri = resphead.headers.get(actix_http::http::header::LOCATION).unwrap().to_str().unwrap().parse::<Uri>().unwrap();
                             return deal_with_redirects(backend.clone(), reqhead, reqbody, addr).await;
                         }
