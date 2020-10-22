@@ -106,9 +106,19 @@ where
             Box::pin(async move {
                 let connection = fut.await?;
 
+                // FIXME: whether we'll resend the body depends on the redirect status code
+                let reqbody = match body {
+                    Body::None => Body::None,
+                    Body::Empty => Body::Empty,
+                    Body::Bytes(ref b) => Body::Bytes(b.clone()),
+                    // can't re-stream body, send an empty one instead
+                    // TODO: maybe emit some kind of warning?
+                    Body::Message(_) => Body::Empty,
+                };
+
                 // send request
                 let resp = connection
-                    .send_request(RequestHeadType::from(head), Body::Empty)
+                    .send_request(RequestHeadType::from(head), body)
                     .await;
 
                 match resp {
@@ -116,7 +126,7 @@ where
                         if resphead.status.is_redirection() {
                             let mut reqhead = RequestHead::default();
                             reqhead.uri = resphead.headers.get(actix_http::http::header::LOCATION).unwrap().to_str().unwrap().parse::<Uri>().unwrap();
-                            return deal_with_redirects(backend.clone(), reqhead, body, addr).await;
+                            return deal_with_redirects(backend.clone(), reqhead, reqbody, addr).await;
                         }
                         Ok(ClientResponse::new(resphead, payload))
                     },
